@@ -12,10 +12,11 @@ WIDTH, HEIGHT = 1000, 1000
 if not HeadlessMode:
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
 clock = pygame.time.Clock()
-SENSOR_ANGLES = [-0.4, 0, 0.4]
+SENSOR_ANGLES = [-0.8, -0.4, -0.2, 0, 0.2, 0.4, 0.8]
 min_w = len(SENSOR_ANGLES)+2
 
-version = 6
+version = 12
+hidden = 6
 
 old_best_brain = None
 old_best_fitness = -float("inf")
@@ -23,6 +24,7 @@ old_best_fitness = -float("inf")
 # ---------- ROAD ----------
 road_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
 road_surface.fill((0, 0, 0, 0))
+pygame.draw.ellipse(road_surface, (255,255,255), ((0,0),(1000,random.randint(400,1000))),100)
 
 road_mask = pygame.mask.from_surface(road_surface)
 
@@ -30,63 +32,85 @@ road_mask = pygame.mask.from_surface(road_surface)
 
 class agent():
     def __init__(self):
-        self.w_throttle = [random.uniform(-1,1) for _ in range(min_w)]
-        self.b_throttle = random.uniform(-0.5,0.5)
+        self.w1 = [
+        	[random.uniform(-1,1) for _ in range(min_w)]
+        	for _ in range(hidden)
+        ]
+        self.b1 = [random.uniform(-0.5,0.5) for _ in range(hidden)]
         
-        self.w_steering = [random.uniform(-1,1) for _ in range(min_w)]
-        self.b_steering = random.uniform(-0.5,0.5)
+        self.w2 = [
+        	[random.uniform(-1,1) for _ in range(hidden)]
+        	for _ in range(3)
+        ]
+        self.b2 = [random.uniform(-0.5,0.5) for _ in range(3)]
         
     def get_params(self):
         return {
-            "w_throttle": self.w_throttle,
-            "b_throttle": self.b_throttle,
+            "w1": self.w1,
+            "b1": self.b1,
             
-            "w_steering": self.w_steering,
-            "b_steering":self.b_steering
+            "w2": self.w2,
+            "b2":self.b2
         }
         
     def set_params(self, params):
-        self.w_throttle = params["w_throttle"]
-        self.b_throttle = params["b_throttle"]
-        self.w_steering = params["w_steering"]
-        self.b_steering = params["b_steering"]
+        self.w1 = params["w1"]
+        self.b1 = params["b1"]
+        self.w2 = params["w2"]
+        self.b2 = params["b2"]
         
     def act(self, sensors):
-        steering = self.b_steering
-        throttle = self.b_throttle
-        for i in range(len(sensors)):
-            steering += self.w_steering[i]*sensors[i]
-            throttle += self.w_throttle[i]*sensors[i]
-            
-        steering = math.tanh(steering)
-        throttle = math.tanh(throttle)
-        return steering, throttle
+        h_outputs = []
+        for i in range(hidden):
+        	s = self.b1[i]
+        	for j in range(len(sensors)):
+        		s += self.w1[i][j] *sensors[j]
+        	h_outputs.append(math.tanh(s))
+        	
+        outputs = []
+        for i in range(3):
+        	s = self.b2[i]
+        	for j in range(hidden):
+        		s += self.w2[i][j] * h_outputs[j]
+        	if i==0:
+        		outputs.append(math.tanh(s))
+        	else:
+        		outputs.append((math.tanh(s)+1)*0.5)
+        	
+        steering, acc, brake = outputs
+        return steering, acc, brake
         
-    def mutate(self,strength=0.2,chance=0.15):
-        for i in range(len(self.w_steering)):
+    def mutate(self,strength=0.1,chance=0.1):
+        for i in range(hidden):
+            for j in range(min_w):
+            	if chance > random.random():
+            		self.w1[i][j] += random.uniform(-strength, strength)
+            		self.w1[i][j] = max(-3, min(3, self.w1[i][j]))
             if chance > random.random():
-                self.w_steering[i] += random.uniform(-strength,strength)
-        for i in range(len(self.w_throttle)):
-            if chance > random.random():
-                self.w_throttle[i] += random.uniform(-strength,strength)
-        if chance > random.random():
-            self.b_steering += random.uniform(-strength,strength)
-        if chance > random.random():
-            self.b_throttle += random.uniform(-strength,strength)
-        
+            	self.b1[i] += random.uniform(-strength, strength)
+            	self.b1[i] = max(-3, min(3, self.b1[i]))
+        for i in range(3):
+        	for j in range(hidden):
+        		if chance > random.random():
+        			self.w2[i][j] += random.uniform(-strength, strength)
+        			self.w2[i][j] = max(-3, min(3, self.w2[i][j]))
+        	if chance > random.random():
+        		self.b2[i] += random.uniform(-strength, strength)
+        		self.b2[i] = max(-3, min(3, self.b2[i]))
         
 # ---------- CAR ----------
 class Car():
-    def __init__(self,pos,angle):
+    def __init__(self):
         self.car_radius = 10
-        self.car_pos = pos if pos else [0,0]
+        self.car_pos = [500,50]
         
         self.speed = 4
         self.maxspeed = 8
         self.minspeed = 1
         self.a = 0.2
+        self.brake = 0.3
         
-        self.angle = angle if angle else 0
+        self.angle = 0
         self.crashed = False
         self.fitness = 0
         self.brain = agent()
@@ -98,16 +122,21 @@ class Car():
             
         sensors = []
         for a in SENSOR_ANGLES:
+        
             d = self.raycast(road_mask, self.car_pos,self.angle+a)
             sensors.append(min(1.0,d/200))
             
-        sensors.append(((self.angle + math.pi) % (2*math.pi) - math.pi)/math.pi)
+        l_sum = sum(sensors[:len(sensors)//2])
+        r_sum = sum(sensors[len(sensors)//2+1:])
+        
+        sensors.append((l_sum-r_sum) / len(sensors))
         sensors.append(self.speed/self.maxspeed)
-        steering, throttle = self.brain.act(sensors)
+        steering, acc, brake = self.brain.act(sensors)
         max_turn = 0.08
         
         self.angle += max_turn*steering* (self.speed / self.maxspeed)
-        self.speed += self.a*throttle
+        self.speed += self.a*acc
+        self.speed -= self.brake*brake
         self.speed = max(self.minspeed, min(self.speed, self.maxspeed))
         
         self.car_pos[0] += math.cos(self.angle) * self.speed
@@ -118,16 +147,19 @@ class Car():
         if not (0 <= x < WIDTH) or not (0 <= y < HEIGHT):
             self.crashed = True
             self.fitness -= 5
+            return
+            
         if not road_mask.get_at((int(x),int(y))):
             self.crashed = True
             self.fitness -= 5
+            return
             
         dx = x - self.last_pos[0]
         dy = y -self.last_pos[1]
         if not self.crashed:
             forward = math.cos(self.angle) * dx + math.sin(self.angle) * dy
             self.fitness += max(0, forward) * (self.speed - self.minspeed)
-            self.fitness -= 0.0625
+            self.fitness -= 0.025
         self.last_pos = self.car_pos[:]
         
     def get_car_mask(self):
@@ -135,7 +167,7 @@ class Car():
         pygame.draw.circle(surf, (255, 0, 0), (self.car_radius, self.car_radius), self.car_radius)
         return pygame.mask.from_surface(surf), surf
         
-    def raycast(self, mask, start, angle, max_dist=200, step=8):
+    def raycast(self, mask, start, angle, max_dist=200, step=2):
         dx = math.cos(angle)
         dy = math.sin(angle)
 
@@ -184,11 +216,11 @@ def compare():
     replay_cars = []
     
     if old_best_brain:
-        old_car = Car(points[0],starting_angle)
+        old_car = Car()
         old_car.brain = copy.deepcopy(old_best_brain)
         replay_cars.append((old_car, (255,0,0)))
         
-    new_car = Car(points[0],starting_angle)
+    new_car = Car()
     new_car.brain = copy.deepcopy(best_brain)
     replay_cars.append((new_car, (0,255,0)))
     
@@ -205,98 +237,19 @@ def compare():
         
         pygame.display.flip()
         clock.tick(60)
-        
-points = []
-waves = {}
-
-for i in range(3):
-    waves[i] = {
-        "freq": random.uniform(1,5),
-        "phase": random.uniform(0,math.pi*2),
-        "amp": random.uniform(1,30)
-    }
-
-def point_creator():
-	left.clear()
-	right.clear()
-	
-	n = len(points)
-	for i in range(n):
-		prev = points[i-1]
-		curr = points[i]
-		next = points[(i+1)%n]
-		
-		dx = next[0] - prev[0]
-		dy = next[1] - prev[1]
-		length = math.hypot(dx,dy)
-		
-		if length <= 0:
-			continue
-			
-		dx /= len
-		dy /= len
-		
-		nx = -dy
-		ny = dx
-		
-		offset = 50
-		
-		left.append([
-			curr[0]+nx*offset,
-			curr[1]+ny*offset
-		])
-		right.append([
-			curr[0]-nx*offset,
-			curr[1]-ny*offset
-		])
-
-def road_draw(n):
-    global road_mask
-    road_surface.fill((0, 0, 0, 0))
-    left, right = point_creator(n)
-    pygame.draw.lines(
-    road_surface,
-    (255,255,255),
-    True,
-    points,
-    100
-    )
-    road_mask = pygame.mask.from_surface(road_surface)
-    
-def road_create():
-    global points
-    points.clear()
-    center = [WIDTH/2, HEIGHT/2]
-    b_radius = 250
-    n = 64
-    for i in range(n):
-        noise = 0
-        angle = i / n * math.tau
-        for w in waves.values():
-            noise += math.sin(angle*w["freq"]+w["phase"])*w["amp"]
-        radius = b_radius + noise
-        x = center[0] + math.cos(angle) * radius
-        y = center[1] + math.sin(angle) * radius
-        points.append([x,y])
-    road_draw(n)
     
 best_brain = None
 best_fitness = -1
 
 # ---------- MAIN LOOP ----------
-max_generations = 1
+max_generations = 10
 pop = 50
-max_steps = 1500
+max_steps = 600
 avg_fitness_history = []
 best_gen_history = []
 best_history =[]
-road_create()
 
-px = points[1][0] - points[0][0]
-py = points[1][1] - points[0][1]
-starting_angle = math.atan2(py,px)
-
-cars=[Car(points[0],starting_angle) for _ in range(pop)]
+cars=[Car() for _ in range(pop)]
 
 try:
     with open("old_best.pkl", "rb") as f:
@@ -309,7 +262,7 @@ try:
             print(f"Loaded previous best brain (fitness={old_best_fitness:.2f})")
             old_best_brain = agent()
             old_best_brain.set_params(old_best_params)
-except FileNotFoundError:
+except (FileNotFoundError,EOFError,pickle.UnpicklingError):
     print("No previous best brain found — starting fresh")
 
 
@@ -337,13 +290,13 @@ for generation in range(max_generations):
     next_gen = []
     
     for elite in elites:
-        c = Car(points[0],starting_angle)
+        c = Car()
         c.brain = copy.deepcopy(elite.brain)
         next_gen.append(c)
         
     while len(next_gen) < pop:
         parent = random.choice(elites)
-        child = Car(points[0],starting_angle)
+        child = Car()
         child.brain = copy.deepcopy(parent.brain)
         child.brain.mutate()
         next_gen.append(child)
