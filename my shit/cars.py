@@ -5,7 +5,7 @@ import copy
 import matplotlib.pyplot as plt
 import pickle
 
-HeadlessMode =True
+HeadlessMode = True
 
 pygame.init()
 WIDTH, HEIGHT = 1000, 1000
@@ -104,11 +104,11 @@ class Car():
         self.car_radius = 10
         self.car_pos = [500,50]
         
-        self.speed = 4
-        self.maxspeed = 8
+        self.speed = 5
+        self.maxspeed = 10
         self.minspeed = 1
-        self.a = 0.2
-        self.brake = 0.3
+        self.a = 0.4
+        self.brake = 0.5
         
         self.angle = 0
         self.crashed = False
@@ -200,12 +200,12 @@ def draw_all():
     screen.fill((30, 30, 30))
     screen.blit(road_surface, (0, 0))
     for c in cars:
-        c.draw()
-        #for a in SENSOR_ANGLES:
-        #      dist = c.raycast(road_mask, c.car_pos, c.angle + a)
-        #      end_x = c.car_pos[0] + math.cos(c.angle + a) * dist
-        #      end_y = c.car_pos[1] + math.sin(c.angle + a) * dist
-        #      pygame.draw.line(screen, (0, 150, 255), c.car_pos, (end_x, end_y), 2)
+        c.draw((0,255,0))
+        for a in SENSOR_ANGLES:
+            dist = c.raycast(road_mask, c.car_pos, c.angle + a)
+            end_x = c.car_pos[0] + math.cos(c.angle + a) * dist
+            end_y = c.car_pos[1] + math.sin(c.angle + a) * dist
+            pygame.draw.line(screen, (0, 150, 255), c.car_pos, (end_x, end_y), 2)
     pygame.display.flip()
     
 def compare():
@@ -242,7 +242,7 @@ best_brain = None
 best_fitness = -1
 
 # ---------- MAIN LOOP ----------
-max_generations = 10
+max_generations = 25
 pop = 50
 max_steps = 600
 avg_fitness_history = []
@@ -271,6 +271,7 @@ for generation in range(max_generations):
     while not all(c.crashed for c in cars) and steps < max_steps:
         for c in cars:
             c.update_car()
+        draw_all()
         steps += 1
             
     avg = sum(c.fitness for c in cars) / len(cars)
